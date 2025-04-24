@@ -1,0 +1,101 @@
+# If you ever want to override this configuration fully, this is the order in which Log4j2 configures itself:
+# https://logging.apache.org/log4j/2.x/manual/configuration.html#automatic-configuration
+Configuration:
+  name: "Streamer logging"
+
+  # This is the log level for internal Log4j2 components
+  status: info
+
+  # How often should this configuration be reloaded, in seconds
+  # Keep in mind, when running this in your IDE, that your configuration file may get copied elsewhere.
+  # For IntelliJ IDEA, the file will be copied under target/classes, and used from there - it's that file you have to modify to reload logging config.
+  # You can set `status: debug` in the line above in order to see where the logging configuration file is read from.
+  monitorInterval: 5
+
+  properties:
+    property:
+      - name: LOG4J2_CONSOLE_LOG_CHARSET
+        value: "UTF-8"
+
+      # The following properties are used to break down the console logging format in understandable bits.
+      # Logging formatting documentation: https://logging.apache.org/log4j/2.x/manual/layouts.html#patterns
+      - name: LOG4J2_DATE_PATTERN
+        value: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX}"
+      - name: LOG4J2_LOG_LEVEL_PATTERN
+        value: "%highlight{%5p}{FATAL=bold red, ERROR=red, WARN=yellow, INFO=green, DEBUG=blue, TRACE=white}"
+      - name: LOG4J2_PID_PATTERN
+        value: "%style{[%pid]}{Magenta}"
+      - name: LOG4J2_THREAD_PATTERN
+        value: "%style{[%t]}{Dim}"
+      - name: LOG4J2_CLASS_NAME_FORMAT
+        # Leading minus aligns the class name to the left.
+        # 60.60 Sets the minimum and maximum length, effectively fixing the class name at 60 characters
+        # lowercase 'c' is used instead of uppercase, which means the logger name is logged, not the class name.
+        #    This is more efficient, search for "class{precision}" in this page for more info: https://logging.apache.org/log4j/2.x/manual/layouts.html#patterns
+        # 1.2* -> Show the last 2 paths in full (i.e. class and its package), truncate all other packages in the path to 1 character.
+        value: "%-60.60c{1.2*}"
+
+      - name: LOG4J2_MESSAGE_LOG_PATTERN
+        # (%m) Print the message, (%n) a newline, (%ex{full}) then the entire exception
+        value: "%m%n%ex{full}"
+      - name: LOG4J2_CONSOLE_LOG_PATTERN
+        value: "${sys:LOG4J2_DATE_PATTERN} ${sys:LOG4J2_LOG_LEVEL_PATTERN} ${sys:LOG4J2_PID_PATTERN} --- ${sys:LOG4J2_THREAD_PATTERN} ${sys:LOG4J2_CLASS_NAME_FORMAT} : ${sys:LOG4J2_MESSAGE_LOG_PATTERN}"
+
+
+  appenders:
+    # Use this appender for JSON format messages
+    Console:
+      - name: stdout_JSON
+        target: SYSTEM_OUT
+        JsonTemplateLayout:
+          # More info about json template layout:
+          # Intro: https://logging.apache.org/log4j/2.x/manual/layouts.html#json-template-layout
+          # Documentation: https://logging.apache.org/log4j/2.x/manual/json-template-layout.html
+          charset: "UTF-8"
+          stackTraceEnabled: true
+
+          # Comparison of layouts:
+          # https://logging.apache.org/log4j/2.x/manual/json-template-layout.html#features
+          eventTemplateUri: "classpath:JsonLayout.json"
+          #          eventTemplateUri: "classpath:EcsLayout.json"
+          #          eventTemplateUri: "classpath:LogstashJsonEventLayoutV1.json"
+          #          eventTemplateUri: "classpath:GelfLayout.json"
+          #          eventTemplateUri: "classpath:GcpLayout.json"
+          eventTemplateAdditionalField:
+            # This parse the `message` field into an additional JSON object.
+            # For normal logs, the `customFields.message` field contains a copy of the logged message.
+            # For MapMessage logs, the Map's key/value pairs become json key/value pairs under the `customFields` object.
+            - key: "customFields"
+              format: "JSON"
+              value: '{
+                  "$resolver": "message",
+                  "fallbackKey": "message"
+              }'
+
+      # Use this appender for console messages with spring-like format
+      - name: stdout_IDE
+        target: SYSTEM_OUT
+        # More info about the pattern layout:
+        # Intro: https://logging.apache.org/log4j/2.x/manual/layouts.html#pattern-layout
+        # Documentation:
+        PatternLayout:
+          Pattern: "${sys:LOG4J2_CONSOLE_LOG_PATTERN}"
+          Charset: "${sys:LOG4J2_CONSOLE_LOG_CHARSET}"
+
+  # We are making use of the additivity feature of Log4j2 to forward every log to the root appender
+  # instead of explicitly listing the appender ref for every logger
+  # Additivity is enabled by default for loggers.
+  # This works well with the combination of logging in kubernetes while having the stdout ingested by a log collector.
+  Loggers:
+    Root:
+      level: "warn"
+      AppenderRef:
+        ref: stdout_IDE
+    #        ref: stdout_JSON
+
+    Logger:
+      - name: com.github.tunashred.streamer
+        level: "info"
+
+      - name: org.apache.kafka
+        level: "warn"
