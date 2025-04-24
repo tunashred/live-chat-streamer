@@ -3,6 +3,8 @@ package com.github.tunashred.streamer;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.github.tunashred.streamer.util.Util;
 import lombok.AccessLevel;
+import lombok.Data;
+import lombok.Getter;
 import lombok.experimental.FieldDefaults;
 import lombok.extern.log4j.Log4j2;
 import org.apache.kafka.clients.producer.KafkaProducer;
@@ -24,10 +26,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 
+@Data
 @Log4j2
 @FieldDefaults(level = AccessLevel.PRIVATE, makeFinal = true)
 public class Streamer {
     static String PREFERENCES_TOPIC = "streamer-preferences";
+    @Getter
     static Map<String, List<String>> preferencesMap = new HashMap<>();
     static KafkaProducer<String, String> producer = null;
     static KafkaStreams streams = null;
@@ -82,7 +86,7 @@ public class Streamer {
         return builder.build();
     }
 
-    public boolean addPreference(String channel, String pack) throws JsonProcessingException {
+    public static boolean addPreference(String channel, String pack) throws JsonProcessingException {
         if (!preferencesMap.containsKey(channel)) {
             log.error("Unknown streamer with name '{}'", channel);
             return false;
@@ -99,7 +103,7 @@ public class Streamer {
         return true;
     }
 
-    public boolean removePreference(String channel, String pack) throws JsonProcessingException {
+    public static boolean removePreference(String channel, String pack) throws JsonProcessingException {
         if (!preferencesMap.containsKey(channel)) {
             log.error("Unknown streamer with name '{}'", channel);
             return false;
