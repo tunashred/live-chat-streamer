@@ -7,8 +7,10 @@ import lombok.Data;
 import lombok.Getter;
 import lombok.experimental.FieldDefaults;
 import lombok.extern.log4j.Log4j2;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.utils.Bytes;
 import org.apache.kafka.streams.*;
@@ -24,25 +26,45 @@ import org.apache.kafka.streams.state.ReadOnlyKeyValueStore;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
+import java.util.*;
+import java.util.regex.Pattern;
+
+import static org.apache.kafka.clients.consumer.ConsumerConfig.GROUP_ID_CONFIG;
 
 @Data
 @Log4j2
 @FieldDefaults(level = AccessLevel.PRIVATE, makeFinal = true)
+// TODO: will I benefit from making the consumer at-most-once?
 public class Streamer {
     static String PREFERENCES_TOPIC = "streamer-preferences";
     @Getter
     static Map<String, List<String>> preferencesMap = new HashMap<>();
     static KafkaProducer<String, String> producer = null;
+    static KafkaConsumer<String, String> consumer = null;
     static KafkaStreams streams = null;
     String topic;
 
-    public Streamer(String inputTopic, String producerPropertiesPath, String streamsPropertiesPath) {
-        log.info("Loading producer properties");
+    public Streamer(String inputTopic, String consumerPropertiesPath, String producerPropertiesPath, String streamsPropertiesPath) {
+        this(inputTopic, consumerPropertiesPath, producerPropertiesPath, streamsPropertiesPath, new Properties(), new Properties());
+    }
+
+    public Streamer(String inputTopic, String consumerPropertiesPath, String producerPropertiesPath, String streamsPropertiesPath, Properties consumerProperties, Properties streamsProperties) {
+        // TODO: not my proudest rodeo with properties
         this.topic = inputTopic;
+        log.info("Loading consumer properties");
+        Properties consumerProps = new Properties();
+        try (InputStream propsFile = new FileInputStream(consumerPropertiesPath)) {
+            consumerProps.load(propsFile);
+            consumerProps.putAll(consumerProperties);
+            consumer = new KafkaConsumer<>(consumerProps);
+            Pattern pattern = Pattern.compile("^pack-.*");
+            consumer.subscribe(pattern);
+        }  catch (IOException e) {
+            log.error("Failed to load consumer properties file: ", e);
+            return;
+        }
+
+        log.info("Loading producer properties");
         Properties producerProps = new Properties();
         try (InputStream propsFile = new FileInputStream(producerPropertiesPath)) {
             producerProps.load(propsFile);
@@ -56,6 +78,7 @@ public class Streamer {
         Properties streamsProps = new Properties();
         try (InputStream propsFile = new FileInputStream(streamsPropertiesPath)) {
             streamsProps.load(propsFile);
+            streamsProps.putAll(streamsProperties);
         } catch (IOException e) {
             log.error("Unable to load streams properties", e);
             return;
@@ -97,7 +120,21 @@ public class Streamer {
         return builder.build();
     }
 
-    public static boolean addPreference(String channel, String pack) throws JsonProcessingException {
+    // TODO: add pack without prefix
+    public static List<String> listPacks() {
+        List<String> packs = new ArrayList<>();
+        Map<String, List<PartitionInfo>> topicMap = consumer.listTopics();
+        for (String topic : topicMap.keySet()) {
+            if (topic.startsWith("pack-")) {
+                packs.add(topic);
+            }
+        }
+        return packs;
+    }
+
+        // TODO: if it is already there, dont add it
+        // TODO 2: add packanizer
+        public static boolean addPreference(String channel, String pack) throws JsonProcessingException {
         if (!preferencesMap.containsKey(channel)) {
             log.error("Unknown streamer with name '{}'", channel);
             return false;
