@@ -21,8 +21,8 @@
         <project.resources.sourceEncoding>${project.encoding}</project.resources.sourceEncoding>
         <archetype.encoding>${project.encoding}</archetype.encoding>
 
-        <lombok.version>1.18.36</lombok.version>
         <kafka.version>3.7.1</kafka.version>
+        <lombok.version>1.18.36</lombok.version>
         <jackson.version>2.16.1</jackson.version>
         <org.apache.logging.log4j.version>2.24.3</org.apache.logging.log4j.version>
     </properties>

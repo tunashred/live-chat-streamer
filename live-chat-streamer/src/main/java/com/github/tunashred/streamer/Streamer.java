@@ -29,8 +29,6 @@ import java.io.InputStream;
 import java.util.*;
 import java.util.regex.Pattern;
 
-import static org.apache.kafka.clients.consumer.ConsumerConfig.GROUP_ID_CONFIG;
-
 @Data
 @Log4j2
 @FieldDefaults(level = AccessLevel.PRIVATE, makeFinal = true)
@@ -48,7 +46,8 @@ public class Streamer {
         this(inputTopic, consumerPropertiesPath, producerPropertiesPath, streamsPropertiesPath, new Properties(), new Properties());
     }
 
-    public Streamer(String inputTopic, String consumerPropertiesPath, String producerPropertiesPath, String streamsPropertiesPath, Properties consumerProperties, Properties streamsProperties) {
+    public Streamer(String inputTopic, String consumerPropertiesPath, String producerPropertiesPath,
+                    String streamsPropertiesPath, Properties consumerProperties, Properties streamsProperties) {
         // TODO: not my proudest rodeo with properties
         this.topic = inputTopic;
         log.info("Loading consumer properties");
@@ -59,7 +58,7 @@ public class Streamer {
             consumer = new KafkaConsumer<>(consumerProps);
             Pattern pattern = Pattern.compile("^pack-.*");
             consumer.subscribe(pattern);
-        }  catch (IOException e) {
+        } catch (IOException e) {
             log.error("Failed to load consumer properties file: ", e);
             return;
         }
@@ -84,7 +83,7 @@ public class Streamer {
             return;
         }
         log.info("Initializing streamer KafkaStreams");
-        streams = new KafkaStreams(createTopology(inputTopic, preferencesMap), streamsProps);
+        streams = new KafkaStreams(createTopology(this.topic, preferencesMap), streamsProps);
     }
 
     public static Topology createTopology(String inputTopic, Map<String, List<String>> preferencesMap) {
@@ -102,7 +101,7 @@ public class Streamer {
         );
 
         userTable.toStream().foreach((key, value) -> {
-            log.info("Receiving preferences for streamer + '{}'", key);
+            log.trace("Receiving preferences for streamer + '{}'", key);
             if (value != null) {
                 try {
                     List<String> preferences = Util.deserializeList(value);
@@ -120,21 +119,25 @@ public class Streamer {
         return builder.build();
     }
 
-    // TODO: add pack without prefix
     public static List<String> listPacks() {
         List<String> packs = new ArrayList<>();
         Map<String, List<PartitionInfo>> topicMap = consumer.listTopics();
         for (String topic : topicMap.keySet()) {
             if (topic.startsWith("pack-")) {
-                packs.add(topic);
+                packs.add(topic.replaceFirst("^pack-", ""));
             }
         }
         return packs;
     }
 
-        // TODO: if it is already there, dont add it
-        // TODO 2: add packanizer
-        public static boolean addPreference(String channel, String pack) throws JsonProcessingException {
+    public static boolean addPreference(String channel, String pack) throws JsonProcessingException {
+        log.trace("Adding pack '{}' to channel '{}' preferences", pack, channel);
+        List<String> availablePacks = listPacks();
+        if (!availablePacks.contains(pack)) {
+            log.error("Pack named '{}' does not exist", pack);
+            return false;
+        }
+        String packName = packanizeChannelName(pack);
         if (!preferencesMap.containsKey(channel)) {
             log.error("Unknown streamer with name '{}'", channel);
             return false;
@@ -144,14 +147,21 @@ public class Streamer {
             log.error("Streamer has no pack preferences");
             return false;
         }
-        preferences.add(pack);
+
+        if (preferences.contains(packName)) {
+            log.warn("Streamer already has the pack '{}' inside their preferences", packName);
+            return false;
+        }
+        preferences.add(packName);
 
         producer.send(new ProducerRecord<>(PREFERENCES_TOPIC, channel, Util.serializeList(preferences)));
-        log.info("Pack '{}' added to streamer '{}' preferences", pack, channel);
+        log.trace("Pack '{}' added to streamer '{}' preferences", pack, channel);
         return true;
     }
 
     public static boolean removePreference(String channel, String pack) throws JsonProcessingException {
+        log.trace("Removing pack '{}' to channel '{}' preferences", pack, channel);
+        String packName = packanizeChannelName(pack);
         if (!preferencesMap.containsKey(channel)) {
             log.error("Unknown streamer with name '{}'", channel);
             return false;
@@ -161,13 +171,21 @@ public class Streamer {
             log.error("Streamer has no pack preferences");
             return false;
         }
-        if (!preferences.remove(pack)) {
-            log.error("Streamer '{}' does not have the pack '{}' in their preferences", channel, pack);
+
+        if (!preferences.remove(packName)) {
+            log.error("Streamer '{}' does not have the pack '{}' in their preferences", channel, packName);
             return false;
         }
         producer.send(new ProducerRecord<>(PREFERENCES_TOPIC, channel, Util.serializeList(preferences)));
-        log.info("Pack '{}' removed from streamer '{}' preferences", pack, channel);
+        log.info("Pack '{}' removed from streamer '{}' preferences", packName, channel);
         return true;
+    }
+
+    private static String packanizeChannelName(String topicName) {
+        if (!topicName.startsWith("pack-")) {
+            return "pack-" + topicName;
+        }
+        return topicName;
     }
 
     private void loadStoreManually(KafkaStreams streams) {
@@ -225,6 +243,7 @@ public class Streamer {
     }
 
     public void close() {
+        log.info("Closing streamer");
         streams.close();
     }
 }
