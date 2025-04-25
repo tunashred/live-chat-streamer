@@ -11,12 +11,15 @@ import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.utils.Bytes;
-import org.apache.kafka.streams.KafkaStreams;
-import org.apache.kafka.streams.StreamsBuilder;
-import org.apache.kafka.streams.Topology;
+import org.apache.kafka.streams.*;
+import org.apache.kafka.streams.errors.InvalidStateStoreException;
+import org.apache.kafka.streams.kstream.Consumed;
 import org.apache.kafka.streams.kstream.KTable;
 import org.apache.kafka.streams.kstream.Materialized;
+import org.apache.kafka.streams.state.KeyValueIterator;
 import org.apache.kafka.streams.state.KeyValueStore;
+import org.apache.kafka.streams.state.QueryableStoreTypes;
+import org.apache.kafka.streams.state.ReadOnlyKeyValueStore;
 
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -35,9 +38,11 @@ public class Streamer {
     static Map<String, List<String>> preferencesMap = new HashMap<>();
     static KafkaProducer<String, String> producer = null;
     static KafkaStreams streams = null;
+    String topic;
 
     public Streamer(String inputTopic, String producerPropertiesPath, String streamsPropertiesPath) {
         log.info("Loading producer properties");
+        this.topic = inputTopic;
         Properties producerProps = new Properties();
         try (InputStream propsFile = new FileInputStream(producerPropertiesPath)) {
             producerProps.load(propsFile);
@@ -65,21 +70,27 @@ public class Streamer {
 
         KTable<String, String> userTable = builder.table(
                 inputTopic,
+                Consumed.with(Serdes.String(), Serdes.String())
+                        .withOffsetResetPolicy(Topology.AutoOffsetReset.EARLIEST),
                 Materialized.<String, String, KeyValueStore<Bytes, byte[]>>as(inputTopic + "-store")
                         .withKeySerde(Serdes.String())
                         .withValueSerde(Serdes.String())
+                        .withCachingDisabled()
         );
 
         userTable.toStream().foreach((key, value) -> {
+            log.info("Receiving preferences for streamer + '{}'", key);
             if (value != null) {
                 try {
-                    log.trace("Receiving preferences for streamer + '{}'", key);
                     List<String> preferences = Util.deserializeList(value);
                     preferencesMap.put(key, preferences);
                     log.trace("Preferences list added: {}", preferences);
                 } catch (JsonProcessingException e) {
-                    log.error("Error ocurred while trying to deserialize streamer '{}' preferences list", key);
+                    log.error("Error ocurred while trying to deserialize streamer '{}' preferences list", key, e);
+                    log.error("Raw value: {}", value);
                 }
+            } else {
+                log.trace("Preference list removed: {}", key);
             }
         });
 
@@ -122,13 +133,57 @@ public class Streamer {
         return true;
     }
 
-    public void start() {
-        log.info("Starting streamer");
+    private void loadStoreManually(KafkaStreams streams) {
         streams.setStateListener(((newState, oldState) -> {
             if (newState == KafkaStreams.State.RUNNING && oldState != KafkaStreams.State.RUNNING) {
-                log.info("Streamer ready");
+                log.info("Streamer is now running");
+                loadStore(streams);
             }
         }));
+    }
+
+    private void loadStore(KafkaStreams streams) {
+        final String storeName = topic + "-store";
+        try {
+            log.info("Trying to load manually the words into from store");
+            ReadOnlyKeyValueStore<String, String> store =
+                    streams.store(StoreQueryParameters.fromNameAndType(storeName, QueryableStoreTypes.keyValueStore()));
+
+            int count = 0;
+            KeyValue<String, String> entry = null;
+            try (KeyValueIterator<String, String> iterator = store.all()) {
+                while (iterator.hasNext()) {
+                    entry = iterator.next();
+                    String key = entry.key;
+                    String value = entry.value;
+
+                    log.trace("Manually added preference: {}", key);
+
+                    if (value == null) {
+                        preferencesMap.remove(key);
+                    } else {
+                        preferencesMap.put(key, Util.deserializeList(value));
+                    }
+                    count++;
+                }
+            } catch (JsonProcessingException e) {
+                log.error("Error ocurred while trying to deserialize streamer '{}' preferences list", entry.key, e);
+                log.error("Raw value: {}", entry.value);
+            }
+
+            if (preferencesMap == null || preferencesMap.isEmpty()) {
+                log.warn("Streamer KTable store is empty");
+                return;
+            }
+            log.trace("All preferences loaded successfully: {} preferences processed", count);
+        } catch (InvalidStateStoreException e) {
+            log.error("Failed to access store '{}': ", storeName, e);
+        }
+    }
+
+    public void start() {
+        log.info("Starting streamer");
+        loadStoreManually(streams);
         streams.start();
     }
 
