@@ -124,7 +124,7 @@ public class Streamer {
         Map<String, List<PartitionInfo>> topicMap = consumer.listTopics();
         for (String topic : topicMap.keySet()) {
             if (topic.startsWith("pack-")) {
-                packs.add(topic.replaceFirst("^pack-", ""));
+                packs.add(topic);
             }
         }
         return packs;
@@ -132,12 +132,13 @@ public class Streamer {
 
     public static boolean addPreference(String channel, String pack) throws JsonProcessingException {
         log.trace("Adding pack '{}' to channel '{}' preferences", pack, channel);
+        String packName = packanizeChannelName(pack);
         List<String> availablePacks = listPacks();
-        if (!availablePacks.contains(pack)) {
-            log.error("Pack named '{}' does not exist", pack);
+
+        if (!availablePacks.contains(packName)) {
+            log.error("Pack named '{}' does not exist", packName);
             return false;
         }
-        String packName = packanizeChannelName(pack);
         if (!preferencesMap.containsKey(channel)) {
             log.error("Unknown streamer with name '{}'", channel);
             return false;
