@@ -139,14 +139,14 @@ public class Streamer {
             log.error("Pack named '{}' does not exist", packName);
             return false;
         }
+        // TODO: add check if topic exists
         if (!preferencesMap.containsKey(channel)) {
-            log.error("Unknown streamer with name '{}'", channel);
-            return false;
+            log.warn("Unknown streamer with name '{}'", channel);
+            preferencesMap.put(channel, new ArrayList<>());
         }
         List<String> preferences = preferencesMap.get(channel);
         if (preferences.isEmpty()) {
-            log.error("Streamer has no pack preferences");
-            return false;
+            log.warn("Streamer has no pack preferences");
         }
 
         if (preferences.contains(packName)) {
@@ -156,6 +156,7 @@ public class Streamer {
         preferences.add(packName);
 
         producer.send(new ProducerRecord<>(PREFERENCES_TOPIC, channel, Util.serializeList(preferences)));
+        producer.flush();
         log.trace("Pack '{}' added to streamer '{}' preferences", pack, channel);
         return true;
     }
